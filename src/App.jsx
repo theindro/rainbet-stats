@@ -555,7 +555,7 @@ export default function App() {
               <div className="dash-logo">
                 <div className="dash-logo-icon">⚡</div>
                 <div>
-                  <div className="dash-title">RAINBET ANALYTICS</div>
+                  <div className="dash-title">RAINBET STATS</div>
                   <div className="dash-sub">Session Intelligence Dashboard</div>
                 </div>
               </div>
@@ -863,6 +863,10 @@ export default function App() {
                 </div>
             )}
           </div>
+        </div>
+
+        <div>
+            <p style={{fontSize: 12, opacity: 0.5}}>Created by Indro</p>
         </div>
       </>
   );
