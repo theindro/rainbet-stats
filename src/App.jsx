@@ -1,5 +1,5 @@
 import React, { useState, useMemo, useCallback, useRef, useEffect } from "react";
-import { Upload, Row, Col, message } from "antd";
+import {Upload, Row, Col, message, Button} from "antd";
 import { UploadOutlined, RiseOutlined, FallOutlined, DollarOutlined, ThunderboltOutlined, CalendarOutlined, DatabaseOutlined } from "@ant-design/icons";
 import dayjs from "dayjs";
 import {
@@ -55,7 +55,7 @@ function bulkPut(db, rows) {
 }
 
 /* streaming aggregation cursor — never loads all rows */
-async function aggregate(db, fromMs, toMs) {
+async function aggregate(db, fromMs, toMs, gamesFilter = []) {
   return new Promise((res, rej) => {
     const tx = db.transaction(STORE, 'readonly');
     const idx = tx.objectStore(STORE).index('createdAt');
@@ -81,6 +81,10 @@ async function aggregate(db, fromMs, toMs) {
     req.onsuccess = e => {
       const cursor = e.target.result;
       if (!cursor) {
+      
+      // Add this inside aggregate() function, before res({ ... })
+      const allGamesList = Object.keys(gameMap).sort();
+
         // Build profitOverTime as CUMULATIVE (this fixes your issue)
         const profitOverTime = Object.keys(cumulativeBuckets)
           .sort()                    // ensures chronological order
@@ -101,12 +105,19 @@ async function aggregate(db, fromMs, toMs) {
           gameDistribution,
           profitOverTime,
           minMs,
-          maxMs
+          maxMs,
+          allGames: allGamesList 
         });
         return;
       }
 
       const r = cursor.value;
+
+      // NEW: Game filter
+      if (gamesFilter.length > 0 && !gamesFilter.includes(r.game || 'Unknown')) {
+        cursor.continue();
+        return;
+      }
 
       // Core aggregates
       totalBet += r.amount || 0;
@@ -210,7 +221,7 @@ self.onmessage = async ({ data }) => {
   if (data.type === 'aggregate') {
     try {
       const db     = await openDB();
-      const result = await aggregate(db, data.fromMs ?? null, data.toMs ?? null);
+      const result = await aggregate(db, data.fromMs ?? null, data.toMs ?? null, data.games || []);
       self.postMessage({ type: 'aggregated', ...result });
     } catch (err) {
       self.postMessage({ type: 'error', message: err.message });
@@ -356,6 +367,39 @@ export default function App() {
   const [appliedTo, setAppliedTo]   = useState(null);
   const [showCustom, setShowCustom] = useState(false);
   const [dataRange, setDataRange]   = useState(null);   // { minMs, maxMs }
+  const [selectedGames, setSelectedGames] = useState([]); // array of game names
+  const [allGames, setAllGames] = useState([]);           // list of unique games
+  const [gameSearch, setGameSearch] = useState("");
+  const [confirmedGames, setConfirmedGames] = useState([]);   // ← NEW
+
+// Filtered games for search + top 10
+  const filteredGames = useMemo(() => {
+    if (!allGames.length) return [];
+
+    let result = [...allGames];
+
+    // Apply search filter
+    if (gameSearch.trim()) {
+      const term = gameSearch.toLowerCase().trim();
+      result = result.filter(game =>
+          game.toLowerCase().includes(term)
+      );
+    }
+
+    // Sort by popularity if we have aggregated data (optional but nice)
+    if (aggregated?.gameDistribution) {
+      const popularityOrder = new Map(
+          aggregated.gameDistribution.map((g, idx) => [g.name, idx])
+      );
+      result.sort((a, b) => {
+        const idxA = popularityOrder.get(a) ?? 999;
+        const idxB = popularityOrder.get(b) ?? 999;
+        return idxA - idxB;
+      });
+    }
+
+    return result;
+  }, [allGames, gameSearch, aggregated]);
 
   /* spin up worker once */
   useEffect(() => {
@@ -371,11 +415,13 @@ export default function App() {
       if (data.type === "done") {
         setTotalRows(data.total);
         setStatus("aggregating");
-        requestAggregate(null, null);
+        requestAggregate(null, null, []);
       }
       if (data.type === "aggregated") {
         setAggregated(data);
         setDataRange({ minMs: data.minMs, maxMs: data.maxMs });
+        setAllGames(data.allGames || []);
+        setSelectedGames([]);        // reset filter when new data loaded
         setStatus("ready");
       }
       if (data.type === "error") {
@@ -387,9 +433,33 @@ export default function App() {
     return () => { worker.terminate(); URL.revokeObjectURL(url); };
   }, []);
 
-  const requestAggregate = useCallback((fromMs, toMs) => {
-    workerRef.current?.postMessage({ type: "aggregate", fromMs, toMs });
+
+  const requestAggregate = useCallback((fromMs, toMs, games = []) => {
+    workerRef.current?.postMessage({ type: "aggregate", fromMs, toMs, games });
   }, []);
+
+  // Re-aggregate when game selection OR time filter changes
+// Re-aggregate ONLY when time filter or confirmed game selection changes
+  useEffect(() => {
+    if (!workerRef.current) return;
+    if (status === "parsing") return;
+
+    let fromMs = null;
+    let toMs = null;
+
+    if (appliedFrom !== null && appliedTo !== null) {
+      fromMs = appliedFrom;
+      toMs = appliedTo;
+    } else if (activePeriod !== "All" && activePeriod !== "Custom") {
+      const period = PERIOD_OPTIONS.find(p => p.label === activePeriod);
+      if (period?.hours) {
+        fromMs = Date.now() - period.hours * 3600000;
+      }
+    }
+
+    setStatus("aggregating");
+    requestAggregate(fromMs, toMs, confirmedGames);   // Use confirmedGames
+  }, [confirmedGames, appliedFrom, appliedTo, activePeriod, requestAggregate]);
 
   /* ── file upload ── */
   const handleFile = useCallback((file) => {
@@ -410,23 +480,33 @@ export default function App() {
   /* ── period selection ── */
   const handlePeriodClick = useCallback((opt) => {
     if (opt.hours === "custom") {
-      setShowCustom(true); setActivePeriod("Custom"); return;
+      setShowCustom(true);
+      setActivePeriod("Custom");
+      return;
     }
-    setShowCustom(false); setActivePeriod(opt.label);
-    setAppliedFrom(null); setAppliedTo(null);
+
+    setShowCustom(false);
+    setActivePeriod(opt.label);
+    setAppliedFrom(null);
+    setAppliedTo(null);
+
     const fromMs = opt.hours ? Date.now() - opt.hours * 3600000 : null;
     setStatus("aggregating");
-    requestAggregate(fromMs, null);
-  }, [requestAggregate]);
+    requestAggregate(fromMs, null, selectedGames);
+  }, [requestAggregate, selectedGames]);
 
   const applyCustomRange = useCallback(() => {
-    if (!customFrom || !customTo) { message.warning("Set both dates."); return; }
+    if (!customFrom || !customTo) {
+      message.warning("Set both dates.");
+      return;
+    }
     const from = new Date(customFrom).getTime();
     const to   = new Date(customTo + "T23:59:59").getTime();
-    setAppliedFrom(from); setAppliedTo(to);
+    setAppliedFrom(from);
+    setAppliedTo(to);
     setStatus("aggregating");
-    requestAggregate(from, to);
-  }, [customFrom, customTo, requestAggregate]);
+    requestAggregate(from, to, selectedGames);   // ← Pass selectedGames
+  }, [customFrom, customTo, requestAggregate, selectedGames]);
 
   /* ── derived ── */
   const stats = useMemo(() => {
@@ -558,6 +638,119 @@ export default function App() {
                 </>
             )}
 
+
+            {/* Game Filter */}
+            {/* Game Filter - Improved */}
+            {/* Game Filter - Optimized */}
+            {hasData && allGames.length > 0 && (
+                <>
+                  <div className="section-label" style={{ marginTop: 36 }}>
+                    Game Filter
+                    <span style={{ marginLeft: 'auto', fontSize: '9px', color: '#3d5470' }}>
+        {confirmedGames.length > 0 ? `${confirmedGames.length} selected` : `${allGames.length} total games`}
+      </span>
+                  </div>
+
+                  <div style={{ background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: '12px', padding: '16px' }}>
+
+                    {/* Search + Controls */}
+                    <div style={{ display: 'flex', gap: '12px', marginBottom: '16px', flexWrap: 'wrap' }}>
+                      <input
+                          type="text"
+                          placeholder="Search games..."
+                          value={gameSearch}
+                          onChange={(e) => setGameSearch(e.target.value)}
+                          style={{
+                            flex: 1,
+                            background: 'var(--bg-panel)',
+                            border: '1px solid var(--border)',
+                            borderRadius: '8px',
+                            padding: '8px 12px',
+                            color: 'var(--text-primary)',
+                            fontFamily: "'Space Mono', monospace",
+                            fontSize: '13px',
+                            outline: 'none'
+                          }}
+                      />
+
+                      <button className="tbtn" onClick={() => { setConfirmedGames([]); setSelectedGames([]); }} disabled={isLoading}>
+                        All Games
+                      </button>
+
+                      {confirmedGames.length > 0 && (
+                          <button
+                              className="tbtn"
+                              onClick={() => { setConfirmedGames([]); setSelectedGames([]); }}
+                              style={{ color: '#ef4444', borderColor: '#ef444444' }}
+                              disabled={isLoading}
+                          >
+                            Clear ({confirmedGames.length})
+                          </button>
+                      )}
+                    </div>
+
+                    {/* Game Buttons */}
+                    <div style={{
+                      display: 'flex',
+                      flexWrap: 'wrap',
+                      gap: '8px',
+                      maxHeight: '260px',
+                      overflowY: 'auto',
+                      paddingRight: '8px'
+                    }}>
+                      {filteredGames.length > 0 ? (
+                          filteredGames.slice(0, 10).map(game => (
+                              <button
+                                  key={game}
+                                  className={`tbtn ${confirmedGames.includes(game) ? "active" : ""}`}
+                                  onClick={() => {
+                                    let newSelection;
+                                    if (confirmedGames.includes(game)) {
+                                      newSelection = confirmedGames.filter(g => g !== game);
+                                    } else {
+                                      newSelection = [...confirmedGames, game];
+                                    }
+                                    setSelectedGames(newSelection);     // temporary for UI
+                                  }}
+                                  disabled={isLoading}
+                                  style={{ whiteSpace: 'nowrap' }}
+                              >
+                                {game}
+                              </button>
+                          ))
+                      ) : (
+                          <div className="no-data" style={{ width: '100%', padding: '40px 0' }}>
+                            No games found
+                          </div>
+                      )}
+                    </div>
+
+                    {filteredGames.length > 10 && (
+                        <div style={{ fontSize: '10px', color: 'var(--text-muted)', marginTop: '12px', textAlign: 'center' }}>
+                          Showing top 10 • {filteredGames.length - 10} more
+                        </div>
+                    )}
+
+                    {/* Apply Button - This is the key fix for performance */}
+                    {selectedGames.length > 0 && (
+                        <Button type="primary"
+                                style={{marginTop: 20}}
+                            onClick={() => setConfirmedGames(selectedGames)}
+                            disabled={isLoading}
+                        >
+                          Apply Filter ({selectedGames.length} games)
+                        </Button>
+                    )}
+                  </div>
+
+                  {confirmedGames.length > 0 && (
+                      <div style={{ fontSize: 11, color: '#8ba4c0', marginTop: 10, paddingLeft: 4 }}>
+                        Filtered by: <strong>{confirmedGames.join(", ")}</strong>
+                      </div>
+                  )}
+                </>
+            )}
+
             {/* Stats */}
             {stats && (
                 <>
@@ -646,6 +839,28 @@ export default function App() {
                     </Col>
                   </Row>
                 </>
+            )}
+
+            {/* Biggest Loser / Worst Game */}
+            {false && (
+                <div style={{ margin: '24px 0 16px' }}>
+                  <div className="section-label">
+                    {selectedGames.length === 1 ? "Game Performance" : "Biggest Loser"}
+                  </div>
+                  <div className="stat-card red" style={{ maxWidth: 420 }}>
+                    <div className="stat-label">
+                      <span className="stat-dot" style={{ background: "#ef4444" }} />
+                      {selectedGames.length === 1 ? selectedGames[0] : "DOWN THE MOST"}
+                    </div>
+                    <div style={{ fontSize: 24, fontWeight: 700, color: "#ef4444", marginBottom: 8 }}>
+                      {gameDistribution[0]?.name || '—'}
+                    </div>
+                    <div style={{ color: "#ef4444", fontFamily: "'Space Mono', monospace", fontSize: 13 }}>
+                      Net P&L: <strong>-${Math.abs(aggregated.totalPayout - aggregated.totalBet).toFixed(2)}</strong>
+                      {' • '}{gameDistribution[0]?.pct}% of rounds
+                    </div>
+                  </div>
+                </div>
             )}
           </div>
         </div>
