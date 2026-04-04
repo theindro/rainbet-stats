@@ -171,6 +171,9 @@ self.onmessage = async ({ data }) => {
         for (let b = 0; b < batchCount; b++) {
           const slice = raw.slice(b * CHUNK, (b + 1) * CHUNK);
           const rows = slice.map(r => {
+const currency = (r['Currency'] || '').toString().trim().toUpperCase();
+              if (currency === 'ARS') return null; // ← SKIP ARS
+          
             const ts = r['Created At'] instanceof Date ? r['Created At'].getTime() : new Date(r['Created At']).getTime();
             const amount = parseFloat(r.Amount || 0);
             const payout = parseFloat(r.Payout || 0);
@@ -195,6 +198,7 @@ self.onmessage = async ({ data }) => {
         const idxAmt = header.indexOf('Amount');
         const idxPay = header.indexOf('Payout');
         const idxGame = header.indexOf('Game');
+        const idxCurrency = header.indexOf('Currency');   // ← Now defined before use
 
         for (let i = 1; i < lines.length; i += CHUNK) {
           const slice = lines.slice(i, i + CHUNK);
@@ -202,6 +206,13 @@ self.onmessage = async ({ data }) => {
           for (const line of slice) {
             if (!line.trim()) continue;
             const cols = line.split(',');
+            
+            const currency = idxCurrency !== -1 
+              ? (cols[idxCurrency] || '').toString().replace(/^"|"$/g, '').trim().toUpperCase() 
+              : '';
+
+            if (currency === 'ARS') continue; // ← SKIP ARS in CSV too
+            
             const ts = new Date(cols[idxCA]?.replace(/^"|"$/g, '') || '').getTime();
             if (isNaN(ts)) continue;
             const amount = parseFloat(cols[idxAmt] || 0);
