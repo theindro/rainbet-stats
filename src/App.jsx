@@ -1,5 +1,5 @@
 import React, { useState, useMemo, useCallback, useRef, useEffect } from "react";
-import {Upload, Row, Col, message, Button} from "antd";
+import {Upload, Row, Col, message, Button, Tabs} from "antd";
 import { UploadOutlined, RiseOutlined, FallOutlined, DollarOutlined, ThunderboltOutlined, CalendarOutlined, DatabaseOutlined } from "@ant-design/icons";
 import dayjs from "dayjs";
 import {
@@ -15,9 +15,9 @@ const { Dragger } = Upload;
 const WORKER_SRC = `
 importScripts('https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js');
 
-const DB_NAME  = 'BetAnalytics';
-const DB_VER   = 1;
-const STORE    = 'rows';
+const DB_NAME = 'BetAnalytics';
+const DB_VER = 1;
+const STORE = 'rows';
 
 function openDB() {
   return new Promise((res, rej) => {
@@ -31,7 +31,7 @@ function openDB() {
       }
     };
     req.onsuccess = e => res(e.target.result);
-    req.onerror   = e => rej(e.target.error);
+    req.onerror = e => rej(e.target.error);
   });
 }
 
@@ -40,7 +40,7 @@ function clearStore(db) {
     const tx = db.transaction(STORE, 'readwrite');
     tx.objectStore(STORE).clear();
     tx.oncomplete = res;
-    tx.onerror    = e => rej(e.target.error);
+    tx.onerror = e => rej(e.target.error);
   });
 }
 
@@ -50,97 +50,97 @@ function bulkPut(db, rows) {
     const os = tx.objectStore(STORE);
     rows.forEach(r => os.put(r));
     tx.oncomplete = res;
-    tx.onerror    = e => rej(e.target.error);
+    tx.onerror = e => rej(e.target.error);
   });
 }
 
-/* streaming aggregation cursor — never loads all rows */
 async function aggregate(db, fromMs, toMs, gamesFilter = []) {
   return new Promise((res, rej) => {
     const tx = db.transaction(STORE, 'readonly');
     const idx = tx.objectStore(STORE).index('createdAt');
 
     let range = null;
-    if (fromMs != null && toMs != null) {
-      range = IDBKeyRange.bound(fromMs, toMs);
-    } else if (fromMs != null) {
-      range = IDBKeyRange.lowerBound(fromMs);
-    } else if (toMs != null) {
-      range = IDBKeyRange.upperBound(toMs);
-    }
+    if (fromMs != null && toMs != null) range = IDBKeyRange.bound(fromMs, toMs);
+    else if (fromMs != null) range = IDBKeyRange.lowerBound(fromMs);
+    else if (toMs != null) range = IDBKeyRange.upperBound(toMs);
 
     const req = idx.openCursor(range);
 
-    let totalBet = 0, totalPayout = 0, count = 0, wins = 0;
+    let totalBet = 0, totalPayout = 0, count = 0;
     const gameMap = {};
-    const dailyBuckets = {};      // daily profit delta (optional)
-    const cumulativeBuckets = {}; // ← NEW: running cumulative profit
-    let runningProfit = 0;        // ← NEW: tracks cumulative P&L
+    const cumulativeBuckets = {};
+    let runningProfit = 0;
     let minMs = Infinity, maxMs = -Infinity;
 
     req.onsuccess = e => {
       const cursor = e.target.result;
       if (!cursor) {
-      
-      // Add this inside aggregate() function, before res({ ... })
-      const allGamesList = Object.keys(gameMap).sort();
+        const allGamesList = Object.keys(gameMap).sort();
 
-        // Build profitOverTime as CUMULATIVE (this fixes your issue)
         const profitOverTime = Object.keys(cumulativeBuckets)
-          .sort()                    // ensures chronological order
-          .map(k => ({
-            name: k,
-            profit: cumulativeBuckets[k]   // now it's running total
-          }));
+          .sort()
+          .map(k => ({ name: k, profit: cumulativeBuckets[k] }));
 
-        const gameDistribution = Object.entries(gameMap)
-          .map(([name, value]) => ({ name, value }))
-          .sort((a, b) => b.value - a.value);
+        const gameStats = Object.entries(gameMap)
+          .map(([name, stats]) => {
+            const rtp = stats.bet > 0 ? (stats.payout / stats.bet) * 100 : 0;
+            return {
+              name,
+              bet: Number(stats.bet.toFixed(2)),
+              payout: Number(stats.payout.toFixed(2)),
+              profit: Number(stats.profit.toFixed(2)),
+              rounds: stats.rounds,
+              rtp: Number(rtp.toFixed(2))
+            };
+          })
+          .sort((a, b) => b.profit - a.profit);
 
         res({
           totalBet,
           totalPayout,
           count,
-          wins,
-          gameDistribution,
+          gameStats,
           profitOverTime,
           minMs,
           maxMs,
-          allGames: allGamesList 
+          allGames: allGamesList
         });
         return;
       }
 
       const r = cursor.value;
 
-      // NEW: Game filter
       if (gamesFilter.length > 0 && !gamesFilter.includes(r.game || 'Unknown')) {
         cursor.continue();
         return;
       }
 
-      // Core aggregates
-      totalBet += r.amount || 0;
-      totalPayout += r.payout || 0;
+      const amount = r.amount || 0;
+      const payout = r.payout || 0;
+      const profit = payout - amount;
+      const gameName = r.game || 'Unknown';
+
+      totalBet += amount;
+      totalPayout += payout;
       count++;
-      if (r.profit > 0) wins++;
-      gameMap[r.game || 'Unknown'] = (gameMap[r.game || 'Unknown'] || 0) + 1;
+
+      if (!gameMap[gameName]) {
+        gameMap[gameName] = { bet: 0, payout: 0, rounds: 0, profit: 0 };
+      }
+      gameMap[gameName].bet += amount;
+      gameMap[gameName].payout += payout;
+      gameMap[gameName].rounds += 1;
+      gameMap[gameName].profit += profit;
 
       if (r.createdAt < minMs) minMs = r.createdAt;
       if (r.createdAt > maxMs) maxMs = r.createdAt;
 
-      // Determine time bucket key (day or hour)
       const spanDays = (toMs && fromMs) ? (toMs - fromMs) / 86400000 : 0;
       const useDayOnly = spanDays > 3 || fromMs == null;
-      const fmt = useDayOnly ? 'YYYY-MM-DD' : 'MM/DD HH:00';
       const sliceEnd = useDayOnly ? 10 : 13;
       const key = new Date(r.createdAt).toISOString().slice(0, sliceEnd);
 
-      // Daily delta (kept for potential future use)
-      dailyBuckets[key] = (dailyBuckets[key] || 0) + (r.profit || 0);
-
-      // === CUMULATIVE PROFIT (This is the important fix) ===
-      runningProfit += (r.profit || 0);
+      runningProfit += profit;
       cumulativeBuckets[key] = Number(runningProfit.toFixed(2));
 
       cursor.continue();
@@ -156,42 +156,45 @@ self.onmessage = async ({ data }) => {
       const db = await openDB();
       await clearStore(db);
 
-      const ab    = data.buffer;  // ArrayBuffer
+      const ab = data.buffer;
       const fname = data.name;
       const isXlsx = /\\.xlsx?$/i.test(fname);
-
       const CHUNK = 5000;
       let total = 0;
 
       if (isXlsx) {
-        // SheetJS parse — whole file but we stream writes
         const wb = XLSX.read(ab, { type: 'array', cellDates: true });
         const ws = wb.Sheets[wb.SheetNames[0]];
         const raw = XLSX.utils.sheet_to_json(ws, { defval: '' });
         const batchCount = Math.ceil(raw.length / CHUNK);
+
         for (let b = 0; b < batchCount; b++) {
           const slice = raw.slice(b * CHUNK, (b + 1) * CHUNK);
           const rows = slice.map(r => {
-            const ts = r['Created At'] instanceof Date
-              ? r['Created At'].getTime()
-              : new Date(r['Created At']).getTime();
+            const ts = r['Created At'] instanceof Date ? r['Created At'].getTime() : new Date(r['Created At']).getTime();
             const amount = parseFloat(r.Amount || 0);
             const payout = parseFloat(r.Payout || 0);
-            return { createdAt: isNaN(ts) ? 0 : ts, amount, payout, profit: payout - amount, game: r.Game || 'Unknown' };
+            return {
+              createdAt: isNaN(ts) ? 0 : ts,
+              amount,
+              payout,
+              profit: payout - amount,
+              game: r.Game || 'Unknown'
+            };
           }).filter(r => r.createdAt > 0);
+
           await bulkPut(db, rows);
           total += rows.length;
           self.postMessage({ type: 'progress', loaded: total, total: raw.length });
         }
       } else {
-        // CSV — parse text in chunks
-        const text   = new TextDecoder().decode(ab);
-        const lines  = text.split('\\n');
+        const text = new TextDecoder().decode(ab);
+        const lines = text.split('\\n');
         const header = lines[0].split(',').map(h => h.trim().replace(/^"|"$/g, ''));
-        const idxCA  = header.indexOf('Created At');
+        const idxCA = header.indexOf('Created At');
         const idxAmt = header.indexOf('Amount');
         const idxPay = header.indexOf('Payout');
-        const idxGame= header.indexOf('Game');
+        const idxGame = header.indexOf('Game');
 
         for (let i = 1; i < lines.length; i += CHUNK) {
           const slice = lines.slice(i, i + CHUNK);
@@ -203,7 +206,13 @@ self.onmessage = async ({ data }) => {
             if (isNaN(ts)) continue;
             const amount = parseFloat(cols[idxAmt] || 0);
             const payout = parseFloat(cols[idxPay] || 0);
-            rows.push({ createdAt: ts, amount, payout, profit: payout - amount, game: (cols[idxGame] || 'Unknown').replace(/^"|"$/g, '') });
+            rows.push({
+              createdAt: ts,
+              amount,
+              payout,
+              profit: payout - amount,
+              game: (cols[idxGame] || 'Unknown').replace(/^"|"$/g, '')
+            });
           }
           await bulkPut(db, rows);
           total += rows.length;
@@ -212,7 +221,6 @@ self.onmessage = async ({ data }) => {
       }
 
       self.postMessage({ type: 'done', total });
-
     } catch (err) {
       self.postMessage({ type: 'error', message: err.message });
     }
@@ -220,7 +228,7 @@ self.onmessage = async ({ data }) => {
 
   if (data.type === 'aggregate') {
     try {
-      const db     = await openDB();
+      const db = await openDB();
       const result = await aggregate(db, data.fromMs ?? null, data.toMs ?? null, data.games || []);
       self.postMessage({ type: 'aggregated', ...result });
     } catch (err) {
@@ -229,7 +237,6 @@ self.onmessage = async ({ data }) => {
   }
 };
 `;
-
 /* ─── Styles ──────────────────────────────────────────────────────────────── */
 const styles = `
   @import url('https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=Syne:wght@400;600;800&display=swap');
@@ -509,26 +516,52 @@ export default function App() {
   }, [customFrom, customTo, requestAggregate, selectedGames]);
 
   /* ── derived ── */
+  /* ── derived stats ── */
   const stats = useMemo(() => {
     if (!aggregated) return null;
-    const { totalBet, totalPayout, count, wins } = aggregated;
+    const { totalBet, totalPayout, count } = aggregated;
     const profit = totalPayout - totalBet;
+    const rtp = totalBet > 0 ? ((totalPayout / totalBet) * 100).toFixed(1) : "0.0";
+
     return {
       totalBet:    totalBet.toFixed(2),
       totalPayout: totalPayout.toFixed(2),
       profit:      profit.toFixed(2),
       totalRounds: count,
-      winRate:     count > 0 ? ((wins / count) * 100).toFixed(1) : "0.0",
+      rtp,
     };
   }, [aggregated]);
 
-  const gameDistribution = useMemo(() => {
-    if (!aggregated?.gameDistribution) return [];
-    const total = aggregated.count;
-    return aggregated.gameDistribution.map(g => ({
-      ...g,
-      pct: ((g.value / total) * 100).toFixed(1),
+  /* ── Per-game stats (sorted by profit descending) ── */
+  const gameStats = useMemo(() => {
+    return aggregated?.gameStats || [];
+  }, [aggregated]);
+
+  const bestGame = gameStats[0] || null;
+  const worstGame = gameStats[gameStats.length - 1] || null;
+
+  const gameDistribution = useMemo(() => {   // keep for pie chart (by rounds)
+    if (!aggregated?.gameStats) return [];
+    const totalRounds = aggregated.count || 1;
+    return aggregated.gameStats.map(g => ({
+      name: g.name,
+      value: g.rounds,
+      pct: ((g.rounds / totalRounds) * 100).toFixed(1),
     }));
+  }, [aggregated]);
+
+  const gameDistributionSorted = useMemo(() => {
+    if (!aggregated?.gameStats) return [];
+
+    const totalRounds = aggregated.count || 1;
+
+    return [...aggregated.gameStats]
+        .sort((a, b) => b.rounds - a.rounds)   // Sort by most played (rounds descending)
+        .map(g => ({
+          name: g.name,
+          value: g.rounds,
+          pct: ((g.rounds / totalRounds) * 100).toFixed(1),
+        }));
   }, [aggregated]);
 
   const profitOverTime = aggregated?.profitOverTime ?? [];
@@ -539,9 +572,9 @@ export default function App() {
     return `${dayjs(aggregated.minMs).format("MMM D, HH:mm")} → ${dayjs(aggregated.maxMs).format("MMM D, HH:mm")}`;
   }, [aggregated, dataRange]);
 
-  const profit      = stats ? parseFloat(stats.profit) : 0;
-  const isLoading   = status === "parsing" || status === "aggregating";
-  const hasData     = status === "ready" || status === "aggregating";
+  const profit = stats ? parseFloat(stats.profit) : 0;
+  const isLoading = status === "parsing" || status === "aggregating";
+  const hasData = status === "ready" || status === "aggregating";
   const pct         = progress.total > 0 ? Math.min(100, (progress.loaded / progress.total) * 100) : 0;
 
   return (
@@ -751,29 +784,35 @@ export default function App() {
                 </>
             )}
 
-            {/* Stats */}
             {stats && (
                 <>
-                  <div className="section-label" style={{ marginTop:36 }}>Session Overview</div>
-                  <Row gutter={[16,16]}>
+                  <div className="section-label" style={{ marginTop: 36 }}>Session Overview</div>
+                  <Row gutter={[16, 16]}>
                     {[
-                      { label:"Total Wagered",  value:`$${stats.totalBet}`,    color:"blue",  dot:"#3b82f6", icon:<DollarOutlined />,    meta:"Cumulative stake" },
-                      { label:"Total Returned", value:`$${stats.totalPayout}`, color:"amber", dot:"#f59e0b", icon:<RiseOutlined />,       meta:"Cumulative payout" },
+                      { label: "Total Wagered", value: `$${stats.totalBet}`, color: "blue", dot: "#3b82f6", icon: <DollarOutlined />, meta: "Cumulative stake" },
+                      { label: "Total Returned", value: `$${stats.totalPayout}`, color: "amber", dot: "#f59e0b", icon: <RiseOutlined />, meta: "Cumulative payout" },
                       {
-                        label:"Net P&L",
-                        value:`${profit >= 0 ? "+" : ""}$${stats.profit}`,
-                        color: profit >= 0 ? "green":"red",
-                        dot:   profit >= 0 ? "#22c55e":"#ef4444",
-                        valueColor: profit >= 0 ? "#22c55e":"#ef4444",
-                        icon:  profit >= 0 ? <RiseOutlined /> : <FallOutlined />,
-                        meta:  profit >= 0 ? "Profitable session":"Net loss",
+                        label: "Net P&L",
+                        value: `${profit >= 0 ? "+" : ""}$${stats.profit}`,
+                        color: profit >= 0 ? "green" : "red",
+                        dot: profit >= 0 ? "#22c55e" : "#ef4444",
+                        valueColor: profit >= 0 ? "#22c55e" : "#ef4444",
+                        icon: profit >= 0 ? <RiseOutlined /> : <FallOutlined />,
+                        meta: profit >= 0 ? "Profitable session" : "Net loss",
                       },
-                      { label:"Win Rate", value:`${stats.winRate}%`, color:"blue", dot:"#06b6d4", icon:<ThunderboltOutlined />, meta:`${stats.totalRounds.toLocaleString()} rounds` },
+                      {
+                        label: "Overall RTP",
+                        value: `${stats.rtp}%`,
+                        color: "cyan",
+                        dot: "#06b6d4",
+                        icon: <ThunderboltOutlined />,
+                        meta: `${stats.totalRounds.toLocaleString()} rounds`
+                      },
                     ].map((s, i) => (
                         <Col xs={24} sm={12} lg={6} key={i}>
-                          <div className={`stat-card ${s.color}`} style={{ animationDelay:`${i * 0.06}s` }}>
+                          <div className={`stat-card ${s.color}`} style={{ animationDelay: `${i * 0.06}s` }}>
                             <div className="stat-label">
-                              <span className="stat-dot" style={{ background:s.dot }} />
+                              <span className="stat-dot" style={{ background: s.dot }} />
                               {s.label}
                             </div>
                             <div className="stat-value" style={{ color: s.valueColor || "var(--text-primary)" }}>{s.value}</div>
@@ -783,61 +822,148 @@ export default function App() {
                     ))}
                   </Row>
 
-                  <div className="section-label" style={{ marginTop:36 }}>Performance Charts</div>
-                  <Row gutter={[16,16]}>
-                    <Col xs={24} lg={14}>
-                      <div className="chart-panel">
-                        <div className="chart-hdr">
-                          <div className="chart-title">Cumulative Profit / Loss</div>
-                          <div className="chart-tag">Time Series</div>
+                  <div className="section-label" style={{marginTop: 36}}>Performance Charts</div>
+                  <Row gutter={20}>
+                      <Col xs={24} lg={14}>
+                        <div className="chart-panel">
+                          <div className="chart-hdr">
+                            <div className="chart-title">Cumulative Profit / Loss</div>
+                            <div className="chart-tag">Time Series</div>
+                          </div>
+                          <div className="chart-body">
+                            <ResponsiveContainer width="100%" height={280}>
+                              <AreaChart data={profitOverTime} margin={{ top:8, right:16, left:0, bottom:0 }}>
+                                <defs>
+                                  <linearGradient id="pg" x1="0" y1="0" x2="0" y2="1">
+                                    <stop offset="0%"   stopColor={profit >= 0 ? "#22c55e":"#ef4444"} stopOpacity={0.25} />
+                                    <stop offset="100%" stopColor={profit >= 0 ? "#22c55e":"#ef4444"} stopOpacity={0} />
+                                  </linearGradient>
+                                </defs>
+                                <CartesianGrid strokeDasharray="2 4" stroke="#1e2d45" />
+                                <XAxis dataKey="name" tick={{ fontFamily:"'Space Mono',monospace", fontSize:9, fill:"#3d5470" }} axisLine={false} tickLine={false} interval="preserveStartEnd" />
+                                <YAxis tick={{ fontFamily:"'Space Mono',monospace", fontSize:9, fill:"#3d5470" }} axisLine={false} tickLine={false} tickFormatter={v => `$${v}`} />
+                                <Tooltip content={<CustomTooltip />} />
+                                <Area type="monotone" dataKey="profit" stroke={profit >= 0 ? "#22c55e":"#ef4444"} strokeWidth={2} fill="url(#pg)" dot={false} />
+                              </AreaChart>
+                            </ResponsiveContainer>
+                          </div>
                         </div>
-                        <div className="chart-body">
-                          <ResponsiveContainer width="100%" height={280}>
-                            <AreaChart data={profitOverTime} margin={{ top:8, right:16, left:0, bottom:0 }}>
-                              <defs>
-                                <linearGradient id="pg" x1="0" y1="0" x2="0" y2="1">
-                                  <stop offset="0%"   stopColor={profit >= 0 ? "#22c55e":"#ef4444"} stopOpacity={0.25} />
-                                  <stop offset="100%" stopColor={profit >= 0 ? "#22c55e":"#ef4444"} stopOpacity={0} />
-                                </linearGradient>
-                              </defs>
-                              <CartesianGrid strokeDasharray="2 4" stroke="#1e2d45" />
-                              <XAxis dataKey="name" tick={{ fontFamily:"'Space Mono',monospace", fontSize:9, fill:"#3d5470" }} axisLine={false} tickLine={false} interval="preserveStartEnd" />
-                              <YAxis tick={{ fontFamily:"'Space Mono',monospace", fontSize:9, fill:"#3d5470" }} axisLine={false} tickLine={false} tickFormatter={v => `$${v}`} />
-                              <Tooltip content={<CustomTooltip />} />
-                              <Area type="monotone" dataKey="profit" stroke={profit >= 0 ? "#22c55e":"#ef4444"} strokeWidth={2} fill="url(#pg)" dot={false} />
-                            </AreaChart>
-                          </ResponsiveContainer>
-                        </div>
-                      </div>
-                    </Col>
+                      </Col>
 
                     <Col xs={24} lg={10}>
                       <div className="chart-panel">
                         <div className="chart-hdr">
                           <div className="chart-title">Game Distribution</div>
-                          <div className="chart-tag">Breakdown</div>
+                          <div className="chart-tag">By Rounds Played</div>
                         </div>
-                        <div style={{ display:"flex", justifyContent:"center", paddingTop:12 }}>
+
+                        <div style={{ display: "flex", justifyContent: "center", paddingTop: 12 }}>
                           <PieChart width={180} height={180}>
-                            <Pie data={gameDistribution} dataKey="value" nameKey="name" cx="50%" cy="50%" innerRadius={50} outerRadius={82} paddingAngle={2} strokeWidth={0}>
-                              {gameDistribution.map((_, i) => <Cell key={i} fill={PIE_COLORS[i % PIE_COLORS.length]} />)}
+                            <Pie
+                                data={gameDistributionSorted}
+                                dataKey="value"
+                                nameKey="name"
+                                cx="50%"
+                                cy="50%"
+                                innerRadius={50}
+                                outerRadius={82}
+                                paddingAngle={2}
+                                strokeWidth={0}
+                            >
+                              {gameDistributionSorted.map((_, i) => (
+                                  <Cell key={i} fill={PIE_COLORS[i % PIE_COLORS.length]} />
+                              ))}
                             </Pie>
-                            <Tooltip contentStyle={{ background:"#0d1a2e", border:"1px solid #1e2d45", borderRadius:8, fontFamily:"'Space Mono',monospace", fontSize:11 }} itemStyle={{ color:"#f0f6ff" }} />
+                            <Tooltip
+                                contentStyle={{
+                                  background: "#0d1a2e",
+                                  border: "1px solid #1e2d45",
+                                  borderRadius: 8,
+                                  fontFamily: "'Space Mono',monospace",
+                                  fontSize: 11
+                                }}
+                                itemStyle={{ color: "#f0f6ff" }}
+                            />
                           </PieChart>
                         </div>
+
                         <div className="pie-legend">
-                          {gameDistribution.slice(0, 8).map((item, i) => (
+                          {gameDistributionSorted.slice(0, 8).map((item, i) => (
                               <div className="pli" key={i}>
                                 <div className="pld" style={{ background: PIE_COLORS[i % PIE_COLORS.length] }} />
-                                <span style={{ minWidth:80, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{item.name}</span>
-                                <div className="plb"><div className="plf" style={{ width:`${item.pct}%`, background: PIE_COLORS[i % PIE_COLORS.length] }} /></div>
-                                <span className="plc">{item.value.toLocaleString()}</span>
+                                <span style={{
+                                  minWidth: 80,
+                                  overflow: "hidden",
+                                  textOverflow: "ellipsis",
+                                  whiteSpace: "nowrap"
+                                }}>
+            {item.name}
+          </span>
+                                <div className="plb">
+                                  <div
+                                      className="plf"
+                                      style={{
+                                        width: `${item.pct}%`,
+                                        background: PIE_COLORS[i % PIE_COLORS.length]
+                                      }}
+                                  />
+                                </div>
+                                <span className="plc">
+            {item.value.toLocaleString()}
+          </span>
                               </div>
                           ))}
                         </div>
                       </div>
                     </Col>
                   </Row>
+                </>
+            )}
+
+
+            {/* All Games Table */}
+            {gameStats.length > 0 && (
+                <>
+                  <div className="section-label" style={{ marginTop: 40 }}>
+                    All Games Breakdown
+                  </div>
+                  <div style={{
+                    background: 'var(--bg-card)',
+                    border: '1px solid var(--border)',
+                    borderRadius: '12px',
+                    overflow: 'hidden'
+                  }}>
+                    <table style={{ width: '100%', borderCollapse: 'collapse', fontFamily: "'Space Mono', monospace", fontSize: '12px' }}>
+                      <thead>
+                      <tr style={{ background: '#0d1320', borderBottom: '1px solid var(--border)' }}>
+                        <th style={{ padding: '12px 16px', textAlign: 'left' }}>Game</th>
+                        <th style={{ padding: '12px 16px', textAlign: 'right' }}>Rounds</th>
+                        <th style={{ padding: '12px 16px', textAlign: 'right' }}>Wagered</th>
+                        <th style={{ padding: '12px 16px', textAlign: 'right' }}>Returned</th>
+                        <th style={{ padding: '12px 16px', textAlign: 'right' }}>Profit</th>
+                        <th style={{ padding: '12px 16px', textAlign: 'right' }}>RTP</th>
+                      </tr>
+                      </thead>
+                      <tbody>
+                      {gameStats.map((game, i) => (
+                          <tr key={i} style={{ borderBottom: '1px solid var(--border)' }}>
+                            <td style={{ padding: '12px 16px' }}>{game.name}</td>
+                            <td style={{ padding: '12px 16px', textAlign: 'right' }}>{game.rounds.toLocaleString()}</td>
+                            <td style={{ padding: '12px 16px', textAlign: 'right' }}>${game.bet.toFixed(2)}</td>
+                            <td style={{ padding: '12px 16px', textAlign: 'right' }}>${game.payout.toFixed(2)}</td>
+                            <td style={{
+                              padding: '12px 16px',
+                              textAlign: 'right',
+                              color: game.profit >= 0 ? '#22c55e' : '#ef4444'
+                            }}>
+                              {game.profit >= 0 ? '+' : ''}${game.profit.toFixed(2)}
+                            </td>
+                            <td style={{ padding: '12px 16px', textAlign: 'right' }}>{game.rtp}%</td>
+                          </tr>
+                      ))}
+                      </tbody>
+                    </table>
+                  </div>
                 </>
             )}
 
