@@ -26,4 +26,14 @@ export default defineConfig([
       'no-unused-vars': ['error', { varsIgnorePattern: '^[A-Z_]' }],
     },
   },
+  {
+    files: ['src/worker/**'],
+    languageOptions: {
+      globals: {
+        ...globals.worker,
+        importScripts: 'readonly',
+        XLSX: 'readonly',
+      },
+    },
+  },
 ])
