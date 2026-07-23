@@ -8,9 +8,11 @@ import {
   FireOutlined,
 } from "@ant-design/icons";
 import { rainbetColors } from "../theme/rainbetTheme";
+import { useFormatMoney } from "../hooks/useFormatMoney";
+
 const { Text } = Typography;
 
-function StatCard({ title, value, prefix, suffix, icon, color, sub }) {
+function StatCard({ title, value, formatter, suffix, icon, color, sub }) {
   return (
     <Card
       bordered={false}
@@ -29,7 +31,7 @@ function StatCard({ title, value, prefix, suffix, icon, color, sub }) {
           </Text>
         }
         value={value}
-        prefix={prefix}
+        formatter={formatter}
         suffix={suffix}
         valueStyle={{ color, fontWeight: 700, fontSize: 26 }}
       />
@@ -41,7 +43,10 @@ function StatCard({ title, value, prefix, suffix, icon, color, sub }) {
 }
 
 export default function StatsOverview({ stats, extra }) {
+  const { formatMoney, displayCurrency } = useFormatMoney();
+
   if (!stats) return null;
+
   const profit = parseFloat(stats.profit);
   const isProfit = profit >= 0;
 
@@ -50,28 +55,28 @@ export default function StatsOverview({ stats, extra }) {
       <Col xs={24} sm={12} lg={6}>
         <StatCard
           title="Total Wagered"
-          value={stats.totalBet}
-          prefix="$"
+          value={parseFloat(stats.totalBet)}
+          formatter={(v) => formatMoney(v)}
           color={rainbetColors.primary}
           icon={<DollarOutlined />}
-          sub="Cumulative stake (USD)"
+          sub={`Cumulative stake (${displayCurrency})`}
         />
       </Col>
       <Col xs={24} sm={12} lg={6}>
         <StatCard
           title="Total Returned"
-          value={stats.totalPayout}
-          prefix="$"
+          value={parseFloat(stats.totalPayout)}
+          formatter={(v) => formatMoney(v)}
           color={rainbetColors.amber}
           icon={<RiseOutlined />}
-          sub="Cumulative payout (USD)"
+          sub={`Cumulative payout (${displayCurrency})`}
         />
       </Col>
       <Col xs={24} sm={12} lg={6}>
         <StatCard
           title="Net P&L"
-          value={Math.abs(profit).toFixed(2)}
-          prefix={isProfit ? "+$" : "-$"}
+          value={profit}
+          formatter={(v) => formatMoney(v, { signed: true })}
           color={isProfit ? rainbetColors.green : rainbetColors.red}
           icon={isProfit ? <RiseOutlined /> : <FallOutlined />}
           sub={isProfit ? "Profitable session" : "Net loss"}
@@ -103,8 +108,8 @@ export default function StatsOverview({ stats, extra }) {
         <Col xs={24} sm={12} lg={6}>
           <StatCard
             title="Biggest Win"
-            value={extra.biggestWin.toFixed(2)}
-            prefix="+$"
+            value={extra.biggestWin}
+            formatter={(v) => formatMoney(v, { signed: true })}
             color={rainbetColors.green}
             icon={<FireOutlined />}
             sub="Single round profit"
@@ -115,8 +120,8 @@ export default function StatsOverview({ stats, extra }) {
         <Col xs={24} sm={12} lg={6}>
           <StatCard
             title="Biggest Loss"
-            value={Math.abs(extra.biggestLoss).toFixed(2)}
-            prefix="-$"
+            value={extra.biggestLoss}
+            formatter={(v) => formatMoney(v, { signed: true })}
             color={rainbetColors.red}
             icon={<FallOutlined />}
             sub="Single round loss"

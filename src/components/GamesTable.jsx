@@ -2,12 +2,14 @@ import { Table, Tag, Typography, Input } from "antd";
 import { useNavigate } from "react-router-dom";
 import { useMemo, useState } from "react";
 import { rainbetColors } from "../theme/rainbetTheme";
+import { useFormatMoney } from "../hooks/useFormatMoney";
 
 const { Text } = Typography;
 
 export default function GamesTable({ gameStats, loading }) {
   const navigate = useNavigate();
   const [search, setSearch] = useState("");
+  const { formatMoney } = useFormatMoney();
 
   const filtered = useMemo(() => {
     if (!search.trim()) return gameStats;
@@ -52,7 +54,7 @@ export default function GamesTable({ gameStats, loading }) {
       key: "bet",
       align: "right",
       sorter: (a, b) => a.bet - b.bet,
-      render: (v) => `$${v.toFixed(2)}`,
+      render: (v) => formatMoney(v),
     },
     {
       title: "Returned",
@@ -60,7 +62,7 @@ export default function GamesTable({ gameStats, loading }) {
       key: "payout",
       align: "right",
       sorter: (a, b) => a.payout - b.payout,
-      render: (v) => `$${v.toFixed(2)}`,
+      render: (v) => formatMoney(v),
     },
     {
       title: "Profit",
@@ -70,7 +72,7 @@ export default function GamesTable({ gameStats, loading }) {
       sorter: (a, b) => a.profit - b.profit,
       render: (v) => (
         <Text style={{ color: v >= 0 ? rainbetColors.green : rainbetColors.red, fontWeight: 600 }}>
-          {v >= 0 ? "+" : ""}${v.toFixed(2)}
+          {formatMoney(v, { signed: true })}
         </Text>
       ),
     },
@@ -89,7 +91,7 @@ export default function GamesTable({ gameStats, loading }) {
       title: "Win Rate",
       key: "winRate",
       align: "right",
-      sorter: (a, b) => (a.wins / a.rounds) - (b.wins / b.rounds),
+      sorter: (a, b) => a.wins / a.rounds - b.wins / b.rounds,
       render: (_, r) => `${r.rounds > 0 ? ((r.wins / r.rounds) * 100).toFixed(1) : 0}%`,
     },
   ];

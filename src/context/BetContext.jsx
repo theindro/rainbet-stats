@@ -1,6 +1,7 @@
 import { useState, useCallback, useMemo } from "react";
 import { BetContext } from "../hooks/useBetContext";
 import { PERIOD_OPTIONS } from "../utils/stats";
+import { loadDisplayCurrency, saveDisplayCurrency } from "../utils/currency";
 
 export function BetProvider({ children, worker }) {
   const [activePeriod, setActivePeriod] = useState("All");
@@ -9,6 +10,12 @@ export function BetProvider({ children, worker }) {
   const [appliedFrom, setAppliedFrom] = useState(null);
   const [appliedTo, setAppliedTo] = useState(null);
   const [showCustom, setShowCustom] = useState(false);
+  const [displayCurrency, setDisplayCurrencyState] = useState(loadDisplayCurrency);
+
+  const setDisplayCurrency = useCallback((currency) => {
+    setDisplayCurrencyState(currency);
+    saveDisplayCurrency(currency);
+  }, []);
 
   const getTimeRange = useCallback(() => {
     if (appliedFrom !== null && appliedTo !== null) {
@@ -57,8 +64,10 @@ export function BetProvider({ children, worker }) {
       handlePeriodChange,
       applyCustomRange,
       getTimeRange,
+      displayCurrency,
+      setDisplayCurrency,
     }),
-    [worker, activePeriod, customFrom, customTo, appliedFrom, appliedTo, showCustom, handlePeriodChange, applyCustomRange, getTimeRange]
+    [worker, activePeriod, customFrom, customTo, appliedFrom, appliedTo, showCustom, handlePeriodChange, applyCustomRange, getTimeRange, displayCurrency, setDisplayCurrency]
   );
 
   return <BetContext.Provider value={value}>{children}</BetContext.Provider>;

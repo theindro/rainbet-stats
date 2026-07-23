@@ -76,6 +76,26 @@ export async function fetchExchangeRates() {
   return cachedRates;
 }
 
+export const DISPLAY_CURRENCIES = ["USD", "ARS", "CAD", "EUR"];
+
+export const CURRENCY_SYMBOLS = {
+  USD: "$",
+  EUR: "€",
+  CAD: "C$",
+  ARS: "AR$",
+};
+
+const STORAGE_KEY = "rainbet-stats-display-currency";
+
+export function loadDisplayCurrency() {
+  const saved = localStorage.getItem(STORAGE_KEY);
+  return DISPLAY_CURRENCIES.includes(saved) ? saved : "USD";
+}
+
+export function saveDisplayCurrency(currency) {
+  localStorage.setItem(STORAGE_KEY, currency);
+}
+
 /** Convert amount in given currency to USD */
 export function toUsd(amount, currency, rates) {
   const cur = (currency || "USD").toUpperCase().trim();
@@ -85,6 +105,21 @@ export function toUsd(amount, currency, rates) {
   const rate = rates[cur];
   if (!rate || rate <= 0) return amount;
   return amount / rate;
+}
+
+/** Convert USD amount to target display currency */
+export function fromUsd(usdAmount, targetCurrency, rates) {
+  const cur = (targetCurrency || "USD").toUpperCase().trim();
+  if (!usdAmount || isNaN(usdAmount)) return 0;
+  if (cur === "USD") return usdAmount;
+
+  const rate = rates?.[cur];
+  if (!rate || rate <= 0) return usdAmount;
+  return usdAmount * rate;
+}
+
+export function getCurrencySymbol(currency) {
+  return CURRENCY_SYMBOLS[currency] || `${currency} `;
 }
 
 export function getUniqueCurrencies(rows) {

@@ -98,7 +98,7 @@ export default function AppLayout() {
       </Content>
 
       <div style={{ textAlign: "center", padding: "16px 0 24px", color: rainbetColors.textMuted, fontSize: 12 }}>
-        Created by Indro · All amounts shown in USD
+        Created by Indro
       </div>
     </Layout>
   );

@@ -136,7 +136,7 @@ async function aggregate(db, fromMs, toMs, gamesFilter = [], singleGame = null) 
 
         const profitOverTime = Object.keys(cumulativeBuckets)
           .sort()
-          .map((k) => ({ name: k, profit: cumulativeBuckets[k] }));
+          .map((k) => ({ name: k, ...cumulativeBuckets[k] }));
 
         const gameStats = Object.entries(gameMap)
           .map(([name, stats]) => {
@@ -233,7 +233,12 @@ async function aggregate(db, fromMs, toMs, gamesFilter = [], singleGame = null) 
       const key = new Date(r.createdAt).toISOString().slice(0, sliceEnd);
 
       runningProfit += profit;
-      cumulativeBuckets[key] = Number(runningProfit.toFixed(2));
+
+      if (!cumulativeBuckets[key]) {
+        cumulativeBuckets[key] = { profit: 0, bets: 0 };
+      }
+      cumulativeBuckets[key].bets += 1;
+      cumulativeBuckets[key].profit = Number(runningProfit.toFixed(2));
 
       cursor.continue();
     };

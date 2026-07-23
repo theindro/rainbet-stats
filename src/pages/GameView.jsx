@@ -5,9 +5,11 @@ import { ArrowLeftOutlined, TrophyOutlined } from "@ant-design/icons";
 import dayjs from "dayjs";
 import { useBetContext } from "../hooks/useBetContext";
 import PeriodFilter from "../components/PeriodFilter";
+import CurrencyBar from "../components/CurrencyBar";
 import StatsOverview from "../components/StatsOverview";
 import { deriveStats } from "../utils/stats";
 import ProfitChart from "../components/ProfitChart";
+import { useFormatMoney } from "../hooks/useFormatMoney";
 import {
   StatsSkeleton,
   MetricCardsSkeleton,
@@ -35,7 +37,9 @@ export default function GameView() {
     activePeriod,
     appliedFrom,
     appliedTo,
+    exchangeRates,
   } = useBetContext();
+  const { formatMoney } = useFormatMoney();
 
   const gameExists = allGames.includes(decodedName);
   const showSkeletons = isAggregating || !aggregated;
@@ -115,7 +119,12 @@ export default function GameView() {
           <Title level={3} style={{ color: rainbetColors.textPrimary, margin: 0 }}>
             {decodedName}
           </Title>
-          {!showSkeletons && <SpaceTags provider={aggregated?.gameProvider || gameStat?.provider} />}
+          {!showSkeletons && (
+            <SpaceTags
+              provider={aggregated?.gameProvider || gameStat?.provider}
+              betCount={gameStat?.rounds}
+            />
+          )}
         </div>
         {showSkeletons ? (
           <PnlBadgeSkeleton />
@@ -139,14 +148,21 @@ export default function GameView() {
                   color: profit >= 0 ? rainbetColors.green : rainbetColors.red,
                 }}
               >
-                {profit >= 0 ? "+" : ""}${Math.abs(profit).toFixed(2)}
+                {formatMoney(profit, { signed: true })}
               </div>
+              <Text style={{ color: rainbetColors.textMuted, fontSize: 11, display: "block", marginTop: 4 }}>
+                {gameStat.rounds.toLocaleString()} bets
+              </Text>
             </Card>
           )
         )}
       </div>
 
       <PeriodFilter rangeLabel={showSkeletons ? null : rangeLabel} />
+
+      {!showSkeletons && exchangeRates && (
+        <CurrencyBar currencyBreakdown={aggregated?.currencyBreakdown} />
+      )}
 
       {showSkeletons ? (
         <>
@@ -174,13 +190,16 @@ export default function GameView() {
 
           {gameStat && (
             <Row gutter={[16, 16]} style={{ marginBottom: 24 }}>
-              <Col xs={24} sm={8}>
-                <MetricCard label="Avg Bet Size" value={`$${(gameStat.bet / gameStat.rounds).toFixed(2)}`} />
+              <Col xs={24} sm={6}>
+                <MetricCard label="Total Bets" value={gameStat.rounds.toLocaleString()} />
               </Col>
-              <Col xs={24} sm={8}>
-                <MetricCard label="Avg Return" value={`$${(gameStat.payout / gameStat.rounds).toFixed(2)}`} />
+              <Col xs={24} sm={6}>
+                <MetricCard label="Avg Bet Size" value={formatMoney(gameStat.bet / gameStat.rounds)} />
               </Col>
-              <Col xs={24} sm={8}>
+              <Col xs={24} sm={6}>
+                <MetricCard label="Avg Return" value={formatMoney(gameStat.payout / gameStat.rounds)} />
+              </Col>
+              <Col xs={24} sm={6}>
                 <MetricCard
                   label="Expected vs Actual"
                   value={
@@ -206,12 +225,11 @@ export default function GameView() {
   );
 }
 
-function SpaceTags({ provider }) {
-  if (!provider) return null;
+function SpaceTags({ provider, betCount }) {
   return (
     <div style={{ marginTop: 4 }}>
-      <Tag color="blue">{provider}</Tag>
-      <Tag>USD normalized</Tag>
+      {provider && <Tag color="blue">{provider}</Tag>}
+      {betCount != null && <Tag color="purple">{betCount.toLocaleString()} bets</Tag>}
     </div>
   );
 }

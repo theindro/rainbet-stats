@@ -1,14 +1,16 @@
 import { useEffect, useMemo } from "react";
-import { Row, Col, Card, Typography, Tag, Space, Empty, Spin, Skeleton } from "antd";
+import { Row, Col, Card, Typography, Empty, Spin, Skeleton } from "antd";
 import dayjs from "dayjs";
 import { useBetContext } from "../hooks/useBetContext";
 import UploadSection from "../components/UploadSection";
 import PeriodFilter from "../components/PeriodFilter";
+import CurrencyBar from "../components/CurrencyBar";
 import StatsOverview from "../components/StatsOverview";
 import { deriveStats } from "../utils/stats";
 import ProfitChart from "../components/ProfitChart";
 import GameDistributionChart from "../components/GameDistributionChart";
 import GamesTable from "../components/GamesTable";
+import { useFormatMoney } from "../hooks/useFormatMoney";
 import {
   StatsSkeleton,
   ChartSkeleton,
@@ -33,6 +35,7 @@ export default function Dashboard() {
     appliedFrom,
     appliedTo,
   } = useBetContext();
+  const { formatMoney } = useFormatMoney();
 
   const showSkeletons = isAggregating || (hasData && !aggregated);
 
@@ -123,27 +126,7 @@ export default function Dashboard() {
           ) : (
             <>
               {exchangeRates && (
-                <Card
-                  size="small"
-                  bordered={false}
-                  style={{
-                    background: rainbetColors.bgElevated,
-                    border: `1px solid ${rainbetColors.border}`,
-                    borderRadius: 10,
-                    marginBottom: 20,
-                  }}
-                >
-                  <Space wrap>
-                    <Text style={{ color: rainbetColors.textMuted, fontSize: 12 }}>
-                      Multi-currency → USD conversion active
-                    </Text>
-                    {aggregated?.currencyBreakdown?.slice(0, 5).map((c) => (
-                      <Tag key={c.name} color="blue">
-                        {c.name}: {c.rounds.toLocaleString()} bets
-                      </Tag>
-                    ))}
-                  </Space>
-                </Card>
+                <CurrencyBar currencyBreakdown={aggregated?.currencyBreakdown} />
               )}
 
               {stats && (
@@ -186,7 +169,7 @@ export default function Dashboard() {
                           {bestGame.name}
                         </Title>
                         <Text style={{ color: rainbetColors.green, fontWeight: 600 }}>
-                          +${bestGame.profit.toFixed(2)} · {bestGame.rtp}% RTP
+                          {formatMoney(bestGame.profit, { signed: true })} · {bestGame.rtp}% RTP
                         </Text>
                       </Card>
                     </Col>
@@ -215,7 +198,7 @@ export default function Dashboard() {
                           {worstGame.name}
                         </Title>
                         <Text style={{ color: rainbetColors.red, fontWeight: 600 }}>
-                          ${worstGame.profit.toFixed(2)} · {worstGame.rtp}% RTP
+                          {formatMoney(worstGame.profit, { signed: true })} · {worstGame.rtp}% RTP
                         </Text>
                       </Card>
                     </Col>
