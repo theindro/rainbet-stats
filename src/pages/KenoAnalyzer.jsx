@@ -118,7 +118,7 @@ export default function KenoAnalyzer() {
           Keno Analyzer
         </Title>
         <Text style={{ color: rainbetColors.textSecondary }}>
-          Fetches drawn numbers via dev-server proxy (uses curl with Rainbet headers). Run with npm run dev.
+          Fetches drawn numbers from Rainbet using bet IDs in your CSV (cached locally after first fetch)
         </Text>
       </div>
 

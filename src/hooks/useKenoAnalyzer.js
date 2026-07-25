@@ -56,7 +56,7 @@ export function useKenoAnalyzer(getKenoBetIds) {
 
       if (results.length === 0) {
         setStatus("fetch-failed");
-        message.error("Could not fetch Keno results. Restart dev server (npm run dev) and ensure curl is installed.");
+        message.error("Could not fetch Keno results. Check connection or try again in a moment.");
         return;
       }
 

@@ -1,6 +1,9 @@
-// Browser cannot set Referer/UA headers — Rainbet/Cloudflare blocks localhost.
-// Dev/preview proxy adds Rainbet headers server-side (same as curl).
-const API_BASE = "/rainbet-api";
+function getGameResultUrl(betId) {
+  if (import.meta.env.DEV) {
+    return `/rainbet-api/v1/public/game-results/${betId}`;
+  }
+  return `/api/game-results/${betId}`;
+}
 
 export function parseKenoApiResponse(data) {
   const params = data.game?.parameters || {};
@@ -16,7 +19,7 @@ export function parseKenoApiResponse(data) {
 }
 
 export async function fetchKenoResult(betId) {
-  const res = await fetch(`${API_BASE}/v1/public/game-results/${betId}`, {
+  const res = await fetch(getGameResultUrl(betId), {
     headers: {
       Accept: "application/json, text/plain, */*",
       "x-requested-with": "rb",
@@ -31,7 +34,7 @@ export async function fetchKenoResult(betId) {
   return parseKenoApiResponse(data);
 }
 
-export async function fetchKenoResultsBatch(betIds, { onProgress, getCached, setCached, concurrency = 6 } = {}) {
+export async function fetchKenoResultsBatch(betIds, { onProgress, getCached, setCached, concurrency = 4 } = {}) {
   const queue = [...betIds];
   const results = [];
   let done = 0;

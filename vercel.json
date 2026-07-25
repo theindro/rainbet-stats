@@ -1,0 +1,12 @@
+{
+  "rewrites": [
+    {
+      "source": "/rainbet-api/v1/public/game-results/:betId",
+      "destination": "/api/game-results/:betId"
+    },
+    {
+      "source": "/((?!api/).*)",
+      "destination": "/index.html"
+    }
+  ]
+}
