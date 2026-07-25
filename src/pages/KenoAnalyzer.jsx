@@ -11,14 +11,23 @@ import {
   Space,
   Empty,
   Alert,
+  Upload,
+  Divider,
 } from "antd";
-import { DotChartOutlined, PlayCircleOutlined, StopOutlined } from "@ant-design/icons";
+import {
+  DotChartOutlined,
+  PlayCircleOutlined,
+  StopOutlined,
+  DownloadOutlined,
+  InboxOutlined,
+} from "@ant-design/icons";
 import { useBetContext } from "../hooks/useBetContext";
 import { useKenoAnalyzer } from "../hooks/useKenoAnalyzer";
 import KenoNumberGrid from "../components/KenoNumberGrid";
 import { rainbetColors } from "../theme/rainbetTheme";
 
-const { Title, Text } = Typography;
+const { Title, Text, Paragraph } = Typography;
+const { Dragger } = Upload;
 
 const ROUND_OPTIONS = [
   { value: 100, label: "Last 100 rounds" },
@@ -38,7 +47,10 @@ export default function KenoAnalyzer() {
     roundLimit,
     setRoundLimit,
     totalKenoBets,
-    analyze,
+    canLiveFetch,
+    analyzeLive,
+    analyzeFromImport,
+    exportBetIds,
     cancel,
     isLoading,
   } = useKenoAnalyzer(getKenoBetIds);
@@ -118,7 +130,7 @@ export default function KenoAnalyzer() {
           Keno Analyzer
         </Title>
         <Text style={{ color: rainbetColors.textSecondary }}>
-          Fetches drawn numbers from Rainbet using bet IDs in your CSV (cached locally after first fetch)
+          Analyze which Keno numbers hit most across your bet history
         </Text>
       </div>
 
@@ -128,6 +140,25 @@ export default function KenoAnalyzer() {
 
       {hasData && (
         <>
+          {!canLiveFetch && (
+            <Alert
+              type="info"
+              showIcon
+              style={{ marginBottom: 20 }}
+              message="Production import workflow"
+              description={
+                <div>
+                  <Paragraph style={{ marginBottom: 8, color: rainbetColors.textSecondary }}>
+                    Rainbet blocks server requests (Cloudflare). Fetch on your PC with curl, then import JSON here.
+                  </Paragraph>
+                  <Text code>Export Bet IDs</Text> →{" "}
+                  <Text code>node scripts/fetch-keno-results.mjs keno-bet-ids.txt --limit=2300</Text> →{" "}
+                  <Text code>Import JSON</Text>
+                </div>
+              }
+            />
+          )}
+
           <Card
             bordered={false}
             style={{
@@ -137,44 +168,70 @@ export default function KenoAnalyzer() {
               marginBottom: 20,
             }}
           >
-            <Space wrap align="center" style={{ width: "100%", justifyContent: "space-between" }}>
-              <Space wrap>
-                <Text style={{ color: rainbetColors.textMuted }}>Analyze</Text>
-                <Select
-                  value={roundLimit}
-                  onChange={setRoundLimit}
-                  style={{ width: 180 }}
-                  options={ROUND_OPTIONS}
-                  disabled={isLoading}
-                />
-                {totalKenoBets > 0 && (
-                  <Tag color="blue">{totalKenoBets.toLocaleString()} Keno bets in CSV</Tag>
-                )}
-              </Space>
-              <Space>
-                {isLoading && (
-                  <Button icon={<StopOutlined />} onClick={cancel}>
-                    Cancel
-                  </Button>
-                )}
-                <Button
-                  type="primary"
-                  icon={<PlayCircleOutlined />}
-                  onClick={analyze}
-                  loading={isLoading}
-                >
-                  {isLoading ? "Fetching..." : "Run Analysis"}
-                </Button>
-              </Space>
+            <Space wrap style={{ marginBottom: 16 }}>
+              <Button icon={<DownloadOutlined />} onClick={exportBetIds} disabled={isLoading}>
+                Export Bet IDs
+              </Button>
+              {totalKenoBets > 0 && (
+                <Tag color="blue">{totalKenoBets.toLocaleString()} Keno bets in CSV</Tag>
+              )}
             </Space>
+
+            <Dragger
+              accept=".json"
+              showUploadList={false}
+              disabled={isLoading}
+              beforeUpload={(file) => {
+                analyzeFromImport(file);
+                return false;
+              }}
+              style={{ background: rainbetColors.bgElevated, marginBottom: canLiveFetch ? 16 : 0 }}
+            >
+              <p className="ant-upload-drag-icon">
+                <InboxOutlined style={{ color: rainbetColors.primary }} />
+              </p>
+              <p style={{ color: rainbetColors.textPrimary, fontWeight: 600 }}>Import keno-results.json</p>
+              <p style={{ color: rainbetColors.textMuted, fontSize: 13 }}>
+                Output from scripts/fetch-keno-results.mjs
+              </p>
+            </Dragger>
+
+            {canLiveFetch && (
+              <>
+                <Divider style={{ borderColor: rainbetColors.border }}>Local dev only</Divider>
+                <Space wrap align="center" style={{ width: "100%", justifyContent: "space-between" }}>
+                  <Space wrap>
+                    <Text style={{ color: rainbetColors.textMuted }}>Live fetch</Text>
+                    <Select
+                      value={roundLimit}
+                      onChange={setRoundLimit}
+                      style={{ width: 180 }}
+                      options={ROUND_OPTIONS}
+                      disabled={isLoading}
+                    />
+                  </Space>
+                  <Space>
+                    {isLoading && (
+                      <Button icon={<StopOutlined />} onClick={cancel}>
+                        Cancel
+                      </Button>
+                    )}
+                    <Button type="primary" icon={<PlayCircleOutlined />} onClick={analyzeLive} loading={isLoading}>
+                      {isLoading ? "Fetching..." : "Run Analysis"}
+                    </Button>
+                  </Space>
+                </Space>
+              </>
+            )}
 
             {isLoading && (
               <div style={{ marginTop: 16 }}>
                 <Progress percent={Math.round(pct)} status="active" />
                 <Text style={{ color: rainbetColors.textMuted, fontSize: 12 }}>
-                  {progress.done.toLocaleString()} / {progress.total.toLocaleString()} fetched
+                  {status === "importing"
+                    ? "Parsing import..."
+                    : `${progress.done.toLocaleString()} / ${progress.total.toLocaleString()} fetched`}
                   {progress.failed > 0 && ` · ${progress.failed} failed`}
-                  {progress.fetched > 0 && ` · ${progress.fetched} cached/new`}
                 </Text>
               </div>
             )}
@@ -185,7 +242,7 @@ export default function KenoAnalyzer() {
               type="warning"
               showIcon
               message="No Keno bet IDs found"
-              description="Re-upload your CSV export so bet IDs (ID column) are indexed. Existing data from before this update needs a fresh upload."
+              description="Re-upload your CSV export so bet IDs (ID column) are indexed."
               style={{ marginBottom: 20 }}
             />
           )}

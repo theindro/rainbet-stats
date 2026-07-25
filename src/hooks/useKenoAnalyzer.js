@@ -3,6 +3,9 @@ import { message } from "antd";
 import { fetchKenoResultsBatch } from "../services/kenoApi";
 import { getCachedKenoResult, cacheKenoResult } from "../utils/kenoDb";
 import { analyzeKenoNumbers, analyzeSelectedNumbers } from "../utils/kenoAnalysis";
+import { parseKenoImportJson } from "../utils/kenoImport";
+
+const IS_DEV = import.meta.env.DEV;
 
 export function useKenoAnalyzer(getKenoBetIds) {
   const [status, setStatus] = useState("idle");
@@ -11,6 +14,7 @@ export function useKenoAnalyzer(getKenoBetIds) {
   const [selectedAnalysis, setSelectedAnalysis] = useState([]);
   const [roundLimit, setRoundLimit] = useState(500);
   const [totalKenoBets, setTotalKenoBets] = useState(0);
+  const [importedCount, setImportedCount] = useState(0);
   const abortRef = useRef(false);
 
   useEffect(() => {
@@ -18,8 +22,52 @@ export function useKenoAnalyzer(getKenoBetIds) {
     getKenoBetIds(null).then((ids) => setTotalKenoBets(ids.length));
   }, [getKenoBetIds]);
 
-  const analyze = useCallback(async () => {
+  const applyResults = useCallback(async (results) => {
+    for (const r of results) {
+      await cacheKenoResult(r);
+    }
+    setImportedCount(results.length);
+    setAnalysis(analyzeKenoNumbers(results));
+    setSelectedAnalysis(analyzeSelectedNumbers(results));
+    setStatus("ready");
+  }, []);
+
+  const analyzeFromImport = useCallback(
+    async (file) => {
+      setStatus("importing");
+      setAnalysis(null);
+      setSelectedAnalysis([]);
+      try {
+        const text = await file.text();
+        const results = parseKenoImportJson(text);
+        await applyResults(results);
+        message.success(`Imported ${results.length.toLocaleString()} Keno rounds`);
+      } catch (err) {
+        setStatus("error");
+        message.error(err.message || "Invalid JSON file");
+      }
+    },
+    [applyResults]
+  );
+
+  const exportBetIds = useCallback(async () => {
     if (!getKenoBetIds) return;
+    const allIds = await getKenoBetIds(null);
+    if (allIds.length === 0) {
+      message.warning("No Keno bet IDs found. Re-upload your CSV.");
+      return;
+    }
+    const { downloadTextFile } = await import("../utils/kenoImport");
+    downloadTextFile("keno-bet-ids.txt", allIds.map((b) => b.betId).join("\n"));
+    message.success(`Exported ${allIds.length.toLocaleString()} bet IDs`);
+  }, [getKenoBetIds]);
+
+  const analyzeLive = useCallback(async () => {
+    if (!getKenoBetIds) return;
+    if (!IS_DEV) {
+      message.info("Live fetch only works in local dev. Use Export IDs + script, then Import JSON.");
+      return;
+    }
 
     abortRef.current = false;
     setStatus("loading-ids");
@@ -56,22 +104,20 @@ export function useKenoAnalyzer(getKenoBetIds) {
 
       if (results.length === 0) {
         setStatus("fetch-failed");
-        message.error("Could not fetch Keno results. Check connection or try again in a moment.");
+        message.error("Could not fetch Keno results.");
         return;
       }
 
-      setAnalysis(analyzeKenoNumbers(results));
-      setSelectedAnalysis(analyzeSelectedNumbers(results));
-      setStatus("ready");
+      await applyResults(results);
 
       if (failed > 0) {
-        message.warning(`${failed} rounds failed to fetch (${results.length} succeeded).`);
+        message.warning(`${failed} rounds failed (${results.length} succeeded).`);
       }
     } catch (err) {
       setStatus("error");
       message.error(err.message);
     }
-  }, [getKenoBetIds, roundLimit]);
+  }, [getKenoBetIds, roundLimit, applyResults]);
 
   const cancel = useCallback(() => {
     abortRef.current = true;
@@ -86,8 +132,12 @@ export function useKenoAnalyzer(getKenoBetIds) {
     roundLimit,
     setRoundLimit,
     totalKenoBets,
-    analyze,
+    importedCount,
+    canLiveFetch: IS_DEV,
+    analyzeLive,
+    analyzeFromImport,
+    exportBetIds,
     cancel,
-    isLoading: status === "loading-ids" || status === "fetching",
+    isLoading: status === "loading-ids" || status === "fetching" || status === "importing",
   };
 }
