@@ -43,7 +43,7 @@ export function useKenoAnalyzer(getKenoBetIds) {
       const { results, failed } = await fetchKenoResultsBatch(
         limited.map((b) => b.betId),
         {
-          concurrency: 8,
+          concurrency: 4,
           getCached: getCachedKenoResult,
           setCached: cacheKenoResult,
           onProgress: (p) => {
@@ -56,7 +56,7 @@ export function useKenoAnalyzer(getKenoBetIds) {
 
       if (results.length === 0) {
         setStatus("fetch-failed");
-        message.error("Could not fetch any Keno results. Check your connection and try again.");
+        message.error("Could not fetch Keno results. Restart dev server (npm run dev) and ensure curl is installed.");
         return;
       }
 
