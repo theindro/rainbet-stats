@@ -1,20 +1,32 @@
 importScripts("https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js");
 
 const DB_NAME = "BetAnalytics";
-const DB_VER = 2;
+const DB_VER = 3;
 const STORE = "rows";
+const KENO_STORE = "kenoResults";
 
 function openDB() {
   return new Promise((res, rej) => {
     const req = indexedDB.open(DB_NAME, DB_VER);
     req.onupgradeneeded = (e) => {
       const db = e.target.result;
-      if (db.objectStoreNames.contains(STORE)) {
-        db.deleteObjectStore(STORE);
+      const tx = e.target.transaction;
+
+      if (!db.objectStoreNames.contains(STORE)) {
+        const os = db.createObjectStore(STORE, { autoIncrement: true });
+        os.createIndex("createdAt", "createdAt");
+        os.createIndex("game", "game");
+        os.createIndex("betId", "betId", { unique: false });
+      } else if (e.oldVersion < 3) {
+        const os = tx.objectStore(STORE);
+        if (!os.indexNames.contains("betId")) {
+          os.createIndex("betId", "betId", { unique: false });
+        }
       }
-      const os = db.createObjectStore(STORE, { autoIncrement: true });
-      os.createIndex("createdAt", "createdAt");
-      os.createIndex("game", "game");
+
+      if (!db.objectStoreNames.contains(KENO_STORE)) {
+        db.createObjectStore(KENO_STORE, { keyPath: "betId" });
+      }
     };
     req.onsuccess = (e) => res(e.target.result);
     req.onerror = (e) => rej(e.target.error);
@@ -79,6 +91,7 @@ function buildRow(fields, rates) {
   const payout = toUsd(origPayout, currency, rates);
 
   return {
+    betId: fields.betId || null,
     createdAt: ts,
     amount,
     payout,
@@ -98,6 +111,29 @@ function countRows(db) {
     const tx = db.transaction(STORE, "readonly");
     const req = tx.objectStore(STORE).count();
     req.onsuccess = () => res(req.result);
+    req.onerror = (e) => rej(e.target.error);
+  });
+}
+
+function getKenoBetIds(db, limit) {
+  return new Promise((res, rej) => {
+    const tx = db.transaction(STORE, "readonly");
+    const idx = tx.objectStore(STORE).index("createdAt");
+    const req = idx.openCursor(null, "prev");
+    const ids = [];
+
+    req.onsuccess = (e) => {
+      const cursor = e.target.result;
+      if (!cursor) return res(ids);
+
+      const row = cursor.value;
+      if (row.game === "Keno" && row.betId) {
+        ids.push({ betId: row.betId, createdAt: row.createdAt });
+        if (limit && ids.length >= limit) return res(ids);
+      }
+      cursor.continue();
+    };
+
     req.onerror = (e) => rej(e.target.error);
   });
 }
@@ -272,6 +308,7 @@ self.onmessage = async ({ data }) => {
             .map((r) =>
               buildRow(
                 {
+                  betId: r.ID || r["ID"] || null,
                   createdAt: r["Created At"] instanceof Date ? r["Created At"].toISOString() : r["Created At"],
                   amount: r.Amount,
                   payout: r.Payout,
@@ -294,6 +331,7 @@ self.onmessage = async ({ data }) => {
         const text = new TextDecoder().decode(ab);
         const lines = text.split("\n");
         const header = parseCsvLine(lines[0]).map((h) => h.trim());
+        const idxId = header.indexOf("ID");
         const idxCA = header.indexOf("Created At");
         const idxAmt = header.indexOf("Amount");
         const idxPay = header.indexOf("Payout");
@@ -311,6 +349,7 @@ self.onmessage = async ({ data }) => {
             const cols = parseCsvLine(line);
             const row = buildRow(
               {
+                betId: idxId !== -1 ? cols[idxId] : "",
                 createdAt: cols[idxCA] || "",
                 amount: cols[idxAmt],
                 payout: cols[idxPay],
@@ -357,6 +396,16 @@ self.onmessage = async ({ data }) => {
         data.singleGame || null
       );
       self.postMessage({ type: "aggregated", requestId: data.requestId, singleGame: data.singleGame ?? null, ...result });
+    } catch (err) {
+      self.postMessage({ type: "error", message: err.message });
+    }
+  }
+
+  if (data.type === "getKenoBetIds") {
+    try {
+      const db = await openDB();
+      const ids = await getKenoBetIds(db, data.limit ?? null);
+      self.postMessage({ type: "kenoBetIds", requestId: data.requestId, ids });
     } catch (err) {
       self.postMessage({ type: "error", message: err.message });
     }

@@ -4,6 +4,7 @@ import {
   SearchOutlined,
   ThunderboltOutlined,
   DatabaseOutlined,
+  DotChartOutlined,
 } from "@ant-design/icons";
 import { Outlet, useNavigate, useLocation } from "react-router-dom";
 import { useBetContext } from "../hooks/useBetContext";
@@ -28,7 +29,8 @@ export default function AppLayout() {
       .map((g) => ({ value: g, label: g }));
   }, [allGames, search]);
 
-  const isDashboard = !location.pathname.startsWith("/game");
+  const isDashboard = location.pathname === "/";
+  const isKeno = location.pathname.startsWith("/keno");
 
   const goToGame = (name) => {
     navigate(`/game/${encodeURIComponent(name)}`);
@@ -56,6 +58,16 @@ export default function AppLayout() {
             ghost={!isDashboard}
           >
             Dashboard
+          </Button>
+
+          <Button
+            type={isKeno ? "primary" : "text"}
+            icon={<DotChartOutlined />}
+            onClick={() => navigate("/keno")}
+            className="app-header-nav"
+            ghost={!isKeno}
+          >
+            Keno
           </Button>
         </div>
 

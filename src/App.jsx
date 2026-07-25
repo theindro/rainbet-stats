@@ -5,6 +5,7 @@ import { BetProvider } from "./context/BetContext";
 import AppLayout from "./components/AppLayout";
 import Dashboard from "./pages/Dashboard";
 import GameView from "./pages/GameView";
+import KenoAnalyzer from "./pages/KenoAnalyzer";
 import { antTheme } from "./theme/rainbetTheme";
 
 export default function App() {
@@ -23,6 +24,7 @@ export default function App() {
             <Route element={<AppLayout />}>
               <Route index element={<Dashboard />} />
               <Route path="game/:gameName" element={<GameView />} />
+              <Route path="keno" element={<KenoAnalyzer />} />
             </Route>
           </Routes>
         </BrowserRouter>

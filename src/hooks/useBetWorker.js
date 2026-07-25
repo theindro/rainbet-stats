@@ -13,6 +13,8 @@ export function useBetWorker() {
   const [exchangeRates, setExchangeRates] = useState(null);
   const pendingAggregate = useRef(null);
   const aggregateRequestId = useRef(0);
+  const kenoRequestId = useRef(0);
+  const kenoResolvers = useRef(new Map());
 
   useEffect(() => {
     fetchExchangeRates().then(setExchangeRates);
@@ -45,6 +47,13 @@ export function useBetWorker() {
         }
         setStatus("ready");
       }
+      if (data.type === "kenoBetIds") {
+        const resolve = kenoResolvers.current.get(data.requestId);
+        if (resolve) {
+          kenoResolvers.current.delete(data.requestId);
+          resolve(data.ids);
+        }
+      }
       if (data.type === "error") {
         message.error("Worker error: " + data.message);
         setStatus("idle");
@@ -68,6 +77,14 @@ export function useBetWorker() {
       games,
       singleGame,
       requestId,
+    });
+  }, []);
+
+  const getKenoBetIds = useCallback((limit = null) => {
+    return new Promise((resolve) => {
+      const requestId = ++kenoRequestId.current;
+      kenoResolvers.current.set(requestId, resolve);
+      workerRef.current?.postMessage({ type: "getKenoBetIds", limit, requestId });
     });
   }, []);
 
@@ -111,6 +128,7 @@ export function useBetWorker() {
     hasData,
     parseFile,
     requestAggregate,
+    getKenoBetIds,
     setStatus,
   };
 }
